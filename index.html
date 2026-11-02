@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>幾A幾B｜版本三：GAS 雲端存檔</title>
+<style>
+:root{--bg:#f7f3ff;--card:#fff;--ink:#403b55;--muted:#77718d;--pink:#f6c9dc;--purple:#cfc5f5;--blue:#c9e5f5;--green:#ccebdc;--line:#e8e1f2;--accent:#8b79c8}
+*{box-sizing:border-box}
+body{margin:0;padding:28px 16px;background:linear-gradient(135deg,#f8eff8,#edf6ff);font-family:Arial,"Noto Sans TC",sans-serif;color:var(--ink)}
+main{max-width:900px;margin:auto}
+header{text-align:center;margin-bottom:22px}
+h1{margin:0 0 8px;font-size:clamp(26px,5vw,36px)}
+.sub{color:var(--muted);margin:0}
+.card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:20px;margin:16px 0;box-shadow:0 8px 24px #51447b10}
+h2{font-size:19px;margin:0 0 14px}
+label{display:block;font-weight:700;margin:10px 0 6px}
+input{font:inherit;padding:12px 14px;border:1px solid #d9d1e8;border-radius:12px;width:100%;max-width:360px;color:var(--ink);background:#fff}
+button{font:inherit;border:0;border-radius:12px;padding:11px 16px;background:var(--accent);color:white;font-weight:700;cursor:pointer;margin:6px 6px 0 0}
+button.secondary{background:#e9e3f7;color:#514777}
+button:disabled{opacity:.5;cursor:not-allowed}
+.row{display:flex;gap:10px;flex-wrap:wrap;align-items:end}
+.status{padding:10px 13px;border-radius:12px;background:#f1edfa;color:#554b78;margin-top:12px;white-space:pre-wrap}
+.answer{font-size:24px;letter-spacing:5px;font-weight:800;color:#7663b3}
+.hidden{display:none!important}
+ul{padding-left:22px}
+li{margin:7px 0;line-height:1.5}
+.pill{display:inline-block;border-radius:99px;padding:4px 9px;font-size:12px;background:#e9f4ed;color:#3f785c}
+.pill.done{background:#fce9f1;color:#975575}
+.small{font-size:13px;color:var(--muted);line-height:1.6}
+.history-item{border:1px solid var(--line);border-radius:13px;padding:12px;margin:9px 0}
+.history-item button{font-size:13px;padding:8px 11px}
+.guessline{font-family:ui-monospace,monospace}
+hr{border:0;border-top:1px solid var(--line);margin:16px 0}
+</style>
+</head>
+<body>
+<main>
+<header>
+  <h1>🎯 幾A幾B猜數字</h1>
+  <p class="sub">版本三｜使用玩家代碼連接 Google 試算表雲端存檔</p>
+</header>
+
+<section class="card">
+  <h2>☁️ 玩家雲端存檔</h2>
+  <label for="playerCode">玩家代碼（請自己設定一組容易記住的代碼）</label>
+  <div class="row">
+    <input id="playerCode" maxlength="30" placeholder="例如：U11514003" autocomplete="off">
+    <button id="loadBtn">讀取／建立我的紀錄</button>
+  </div>
+  <div id="cloudStatus" class="status">尚未連線。請先輸入玩家代碼，再按「讀取／建立我的紀錄」。</div>
+  <p class="small">相同玩家代碼會讀取同一份紀錄。這不是 Google 帳號登入；請勿使用密碼、身分證字號等敏感資料當作玩家代碼。</p>
+</section>
+
+<section class="card">
+  <h2>🎮 本局遊戲</h2>
+  <p>請猜一組四位數字（0～9 不重複，第一位可以是 0）。A 代表數字和位置都正確；B 代表數字正確但位置不同。</p>
+  <div class="row">
+    <div>
+      <label for="guessInput">輸入四位數</label>
+      <input id="guessInput" inputmode="numeric" maxlength="4" placeholder="例如：0123" autocomplete="off">
+    </div>
+    <button id="guessBtn" disabled>送出猜測</button>
+    <button id="newBtn" class="secondary" disabled>開始新局</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <label style="display:flex;align-items:center;gap:8px;margin:0;font-weight:400">
+      <input id="debugToggle" type="checkbox" style="width:auto"> 除錯模式：顯示本局答案
+    </label>
+  </div>
+  <div id="answerBox" class="status hidden"></div>
+  <div id="gameStatus" class="status">請先讀取或建立玩家紀錄。</div>
+  <h2 style="margin-top:18px">本局猜測紀錄</h2>
+  <ol id="guessList"><li class="small">尚無猜測紀錄。</li></ol>
+</section>
+
+<section class="card">
+  <h2>📚 多局歷史</h2>
+  <div id="historyList" class="small">讀取玩家紀錄後會顯示歷史。</div>
+</section>
+</main>
+
+<script>
+const GAS_URL = "https://script.google.com/a/macros/go.utaipei.edu.tw/s/AKfycbxXPXagYTB7hyn-R3MWfE7ixjGz9w-RGHe5zCmLrb8-l2h2PxVC4e_gscueBJG4ggbT/exec";
+
+const $ = id => document.getElementById(id);
+let state = null;
+let playerCode = "";
+let busy = false;
+
+function makeAnswer(){
+  const digits = ["0","1","2","3","4","5","6","7","8","9"];
+  for(let i=digits.length-1;i>0;i--){
+    const j=Math.floor(Math.random()*(i+1));
+    [digits[i],digits[j]]=[digits[j],digits[i]];
+  }
+  return digits.slice(0,4).join("");
+}
+function makeRound(){
+  return {id:Date.now().toString(),answer:makeAnswer(),guesses:[],finished:false,createdAt:new Date().toISOString()};
+}
+function freshState(){
+  const round=makeRound();
+  return {rounds:[round],currentRoundId:round.id};
+}
+function currentRound(){
+  return state?.rounds.find(r=>r.id===state.currentRoundId) || null;
+}
+function setCloud(message){$("cloudStatus").textContent=message;}
+function setBusy(value){busy=value;$("loadBtn").disabled=value;$("guessBtn").disabled=value||!state||!currentRound()||currentRound().finished;$("newBtn").disabled=value||!state;}
+function saveCloud(){
+  if(!state||!playerCode)return;
+  const payload={playerCode,data:state};
+  // Apps Script 目前以 JSON 讀取 e.postData.contents；no-cors 可送出簡單 POST，
+  // 瀏覽器不允許讀取回應，因此畫面會提示「已送出」，仍需到試算表確認資料。
+  fetch(GAS_URL,{method:"POST",mode:"no-cors",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(payload)})
+    .then(()=>setCloud("已送出雲端儲存請求。請稍候，再到 Google 試算表確認「遊戲紀錄」工作表是否有你的玩家代碼。"))
+    .catch(err=>setCloud("儲存請求未能送出："+err.message+"。請檢查網路或 GAS 部署設定。"));
+}
+function loadCloud(code){
+  return new Promise((resolve,reject)=>{
+    const callback="gasCallback_"+Date.now()+"_"+Math.floor(Math.random()*100000);
+    const script=document.createElement("script");
+    const timer=setTimeout(()=>{cleanup();reject(new Error("讀取逾時，請確認 GAS 網址與部署權限。"));},15000);
+    function cleanup(){clearTimeout(timer);delete window[callback];script.remove();}
+    window[callback]=result=>{cleanup();resolve(result);};
+    script.onerror=()=>{cleanup();reject(new Error("無法連接 GAS，請確認部署網址及存取權限。"));};
+    script.src=GAS_URL+"?action=load&playerCode="+encodeURIComponent(code)+"&callback="+callback;
+    document.body.appendChild(script);
+  });
+}
+function render(){
+  const round=currentRound();
+  $("guessList").innerHTML="";
+  if(round && round.guesses.length){
+    round.guesses.forEach(g=>{
+      const li=document.createElement("li");
+      li.className="guessline";
+      li.textContent=`${g.guess} → ${g.a}A${g.b}B　(${new Date(g.time).toLocaleString("zh-TW")})`;
+      $("guessList").appendChild(li);
+    });
+  }else $("guessList").innerHTML='<li class="small">尚無猜測紀錄。</li>';
+
+  $("answerBox").classList.toggle("hidden",!($("debugToggle").checked&&round));
+  $("answerBox").textContent=round?"本局答案："+round.answer:"";
+
+  if(round){
+    $("gameStatus").textContent=round.finished?"🎉 本局已完成！答案："+round.answer:"請輸入四位不重複的數字開始猜測。";
+  }
+  $("historyList").innerHTML="";
+  [...(state?.rounds||[])].reverse().forEach((r,index)=>{
+    const div=document.createElement("div");
+    div.className="history-item";
+    const title=document.createElement("div");
+    title.innerHTML=`<strong>第 ${state.rounds.length-index} 局</strong>　<span class="pill ${r.finished?"done":""}">${r.finished?"已完成":"未完成"}</span>`;
+    const info=document.createElement("div");
+    info.className="small";
+    info.textContent=`猜測 ${r.guesses.length} 次｜建立時間：${new Date(r.createdAt).toLocaleString("zh-TW")}`;
+    const detail=document.createElement("div");
+    detail.className="small";
+    detail.textContent=r.guesses.map(g=>`${g.guess}（${g.a}A${g.b}B）`).join("、")||"尚無猜測";
+    const btn=document.createElement("button");
+    btn.className="secondary";
+    btn.textContent=r.id===state.currentRoundId?"目前這局":"查看這局";
+    btn.onclick=()=>{state.currentRoundId=r.id; $("debugToggle").checked=false;render();setBusy(false);};
+    div.append(title,info,detail,btn);
+    $("historyList").appendChild(div);
+  });
+  if(!state)$("historyList").textContent="讀取玩家紀錄後會顯示歷史。";
+  setBusy(false);
+}
+$("loadBtn").addEventListener("click",async()=>{
+  const code=$("playerCode").value.trim();
+  if(!code){setCloud("請先輸入玩家代碼。");return;}
+  if(!/^[A-Za-z0-9_-]{3,30}$/.test(code)){setCloud("玩家代碼請使用 3～30 個英文字母、數字、底線或連字號。");return;}
+  playerCode=code;setBusy(true);setCloud("正在讀取雲端紀錄……");
+  try{
+    const result=await loadCloud(code);
+    if(!result||result.success!==true)throw new Error(result?.message||"GAS 回傳格式不正確。");
+    if(result.data && Array.isArray(result.data.rounds)){
+      state=result.data;
+      if(!currentRound()){const r=makeRound();state.rounds.push(r);state.currentRoundId=r.id;}
+      setCloud("讀取成功！已載入玩家「"+code+"」的雲端紀錄。");
+    }else{
+      state=freshState();
+      setCloud("這是新的玩家代碼，已建立第一局。第一次猜測後會開始儲存雲端紀錄。");
+      saveCloud();
+    }
+    $("debugToggle").checked=false;
+    render();
+  }catch(err){state=null;setCloud("讀取失敗："+err.message);setBusy(false);render();}
+});
+$("guessBtn").addEventListener("click",()=>{
+  const round=currentRound();
+  if(!round||round.finished||busy)return;
+  const guess=$("guessInput").value.trim();
+  if(!/^\d{4}$/.test(guess)){ $("gameStatus").textContent="格式錯誤：請輸入剛好四位數字。";return;}
+  if(new Set(guess).size!==4){$("gameStatus").textContent="格式錯誤：四個數字不能重複。";return;}
+  let a=0,b=0;
+  for(let i=0;i<4;i++){if(guess[i]===round.answer[i])a++;else if(round.answer.includes(guess[i]))b++;}
+  round.guesses.push({guess,a,b,time:new Date().toISOString()});
+  if(a===4)round.finished=true;
+  $("guessInput").value="";
+  $("gameStatus").textContent=a===4?"🎉 恭喜答對！本局完成，答案是 "+round.answer:`結果：${a}A${b}B。繼續加油！`;
+  render();saveCloud();
+});
+$("newBtn").addEventListener("click",()=>{
+  if(!state)return;
+  const round=makeRound();state.rounds.push(round);state.currentRoundId=round.id;
+  $("debugToggle").checked=false;$("guessInput").value="";
+  render();saveCloud();
+  setCloud("已建立新的一局，正在儲存雲端紀錄……");
+});
+$("debugToggle").addEventListener("change",render);
+$("guessInput").addEventListener("keydown",e=>{if(e.key==="Enter")$("guessBtn").click();});
+</script>
+</body>
+</html>
